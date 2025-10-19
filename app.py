@@ -1,17 +1,18 @@
 # app.py
 # ------------------------------------------------------------
-# Рукописный калькулятор (Streamlit) — компактный интерфейс
-# - Три канваса: белый фон, чёрное перо (толщина 15)
-# - Распознавание всегда "на лету", без кнопки "Рассчитать"
-# - Кнопка "Очистить всё" узкая, справа от холстов
-# - Под холстами: слева распознавание (топ-3 для цифр и оператора, %),
-#                 справа вычисление
-# - Без сайдбара и без эмодзи/подсказок
+# Рукописный калькулятор (Streamlit), компактный 2-строчный layout:
+#  ┌─────────────┬─────────────┬─────────────┬───────────────┐
+#  │  Холст A    │  Холст Op   │  Холст B    │  Очистить     │  ← строка 1
+#  ├─────────────┼─────────────┼─────────────┼───────────────┤
+#  │  Распозн. A │  Распозн. Op│  Распозн. B │  Вычисление   │  ← строка 2
+#  └─────────────┴─────────────┴─────────────┴───────────────┘
+# - Белый фон, чёрное перо (толщина 15)
+# - Распознавание всегда "на лету"
+# - Топ-3 для цифр и оператора с процентами
 # ------------------------------------------------------------
 
 import streamlit as st
 import numpy as np
-
 from streamlit_drawable_canvas import st_canvas
 
 from preprocessing import pil_from_canvas, has_ink, preprocess_digit, preprocess_operator
@@ -27,16 +28,31 @@ STROKE_COLOR = "#000000"
 
 DIGITS_MODEL_PATH = "digits_model.keras"
 SYMBOLS_MODEL_PATH = "symbols_cnn_model.keras"
-OP_LABELS = DEFAULT_OPERATOR_LABELS  # например: ['+', '/', '*', '-']
+OP_LABELS = DEFAULT_OPERATOR_LABELS  # например ['+', '/', '*', '-']
 
 st.set_page_config(page_title="Рукописный калькулятор", layout="wide")
 
-# Заголовок компактно
+# Заголовок без эмодзи
 st.markdown("<h3 style='margin:0'>Рукописный калькулятор</h3>", unsafe_allow_html=True)
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-# ---------- Ряд с тремя канвасами + узкая кнопка справа ----------
-cA, cOp, cB, cBtn = st.columns([1, 1, 1, 0.25])
+# ---------- Механизм очистки без experimental_rerun ----------
+if "reset" not in st.session_state:
+    st.session_state["reset"] = 0
+
+def clear_all():
+    # меняем ключи канвасов через счётчик — это гарантированно очищает их
+    st.session_state["reset"] += 1
+    # безопасный rerun (новые версии: st.rerun)
+    try:
+        st.rerun()
+    except Exception:
+        # на старых версиях можно было бы вызвать experimental_rerun,
+        # но если его нет — rerun уже попытались
+        pass
+
+# ---------- Строка 1: три холста + кнопка "Очистить" ----------
+cA, cOp, cB, cCtrl = st.columns([1, 1, 1, 0.5])
 
 with cA:
     st.markdown("**Число A**")
@@ -48,8 +64,9 @@ with cA:
         width=CANVAS_W,
         height=CANVAS_H,
         drawing_mode="freedraw",
-        key="canvas_a",
+        key=f"canvas_a_{st.session_state['reset']}",
     )
+
 with cOp:
     st.markdown("**Оператор**")
     canvas_op = st_canvas(
@@ -60,8 +77,9 @@ with cOp:
         width=CANVAS_W,
         height=CANVAS_H,
         drawing_mode="freedraw",
-        key="canvas_op",
+        key=f"canvas_op_{st.session_state['reset']}",
     )
+
 with cB:
     st.markdown("**Число B**")
     canvas_b = st_canvas(
@@ -72,14 +90,13 @@ with cB:
         width=CANVAS_W,
         height=CANVAS_H,
         drawing_mode="freedraw",
-        key="canvas_b",
+        key=f"canvas_b_{st.session_state['reset']}",
     )
-with cBtn:
-    st.markdown("&nbsp;", unsafe_allow_html=True)
-    clear_clicked = st.button("Очистить всё", use_container_width=True)
 
-if clear_clicked:
-    st.experimental_rerun()
+with cCtrl:
+    st.markdown("**Действия**")
+    if st.button("Очистить всё", use_container_width=True):
+        clear_all()
 
 # ---------- Загрузка моделей ----------
 digits_model, symbols_model, load_errors = load_models_cached(
@@ -87,32 +104,25 @@ digits_model, symbols_model, load_errors = load_models_cached(
 )
 for err in load_errors:
     st.error(err)
-
 ready = (digits_model is not None) and (symbols_model is not None)
 
-# ---------- Инференс "на лету" ----------
+# ---------- Инференс на лету ----------
+pred = None
+top3_digits_a = top3_digits_b = top3_ops = None
+
 something_drawn = any([
     canvas_a.image_data is not None,
     canvas_op.image_data is not None,
     canvas_b.image_data is not None
 ])
 
-pred = None
-top3_digits_a = None
-top3_digits_b = None
-top3_ops = None
-
 if ready and something_drawn:
     img_a = pil_from_canvas(canvas_a.image_data)
     img_op = pil_from_canvas(canvas_op.image_data)
     img_b = pil_from_canvas(canvas_b.image_data)
 
-    ink_a = has_ink(img_a)
-    ink_op = has_ink(img_op)
-    ink_b = has_ink(img_b)
-
-    if ink_a and ink_op and ink_b:
-        # Основной пайплайн (получим best классы и предпросмотры)
+    if has_ink(img_a) and has_ink(img_op) and has_ink(img_b):
+        # Основной пайплайн (даёт предикты и предпросмотры)
         pred = predict_all(
             img_a=img_a,
             img_op=img_op,
@@ -121,71 +131,80 @@ if ready and something_drawn:
             symbols_model=symbols_model,
             operator_labels=OP_LABELS
         )
-
-        # Дополнительно посчитаем топ-3 вероятности вручную здесь,
-        # чтобы точно иметь распределения и для цифр, и для оператора.
+        # Вычислим распределения для топ-3 отдельно (чтобы показать проценты)
         xa, _ = preprocess_digit(img_a)
         xb, _ = preprocess_digit(img_b)
         xop, _ = preprocess_operator(img_op, target_size=(100, 100))
 
-        probs_a = digits_model.predict(xa, verbose=0)[0]
-        probs_b = digits_model.predict(xb, verbose=0)[0]
-        probs_op = symbols_model.predict(xop, verbose=0)[0]
+        pa = digits_model.predict(xa, verbose=0)[0]
+        pb = digits_model.predict(xb, verbose=0)[0]
+        po = symbols_model.predict(xop, verbose=0)[0]
 
-        idxs_a = probs_a.argsort()[-3:][::-1]
-        idxs_b = probs_b.argsort()[-3:][::-1]
-        idxs_op = probs_op.argsort()[-3:][::-1]
+        ia = pa.argsort()[-3:][::-1]
+        ib = pb.argsort()[-3:][::-1]
+        io = po.argsort()[-3:][::-1]
 
-        top3_digits_a = [(int(i), float(probs_a[i])) for i in idxs_a]
-        top3_digits_b = [(int(i), float(probs_b[i])) for i in idxs_b]
+        top3_digits_a = [(int(i), float(pa[i])) for i in ia]
+        top3_digits_b = [(int(i), float(pb[i])) for i in ib]
         top3_ops = [(OP_LABELS[i] if i < len(OP_LABELS) else f"class_{int(i)}",
-                     float(probs_op[i])) for i in idxs_op]
+                     float(po[i])) for i in io]
 
-# ---------- Блок под холстами: слева распознавание, справа вычисление ----------
+# Разделитель между строками
 st.markdown("<div style='height:10px; border-top:1px solid #e6e6e6;'></div>", unsafe_allow_html=True)
-left, right = st.columns([1.6, 1])
 
-with left:
-    st.markdown("**Распознавание**")
+# ---------- Строка 2: распознавание под каждым холстом + вычисление справа ----------
+rA, rOp, rB, rCalc = st.columns([1, 1, 1, 0.5])
+
+with rA:
+    st.markdown("**Распознавание A**")
     if not ready:
-        st.write("Добавьте в каталог приложения файлы моделей: "
-                 "`digits_model.keras`, `symbols_cnn_model.keras`.")
+        st.write("Нет моделей.")
     elif pred is None:
-        st.write("Нарисуйте число A, оператор и число B.")
+        st.write("—")
     else:
-        conf_a = f"{pred.prob_digit_a * 100:.1f}%"
-        conf_b = f"{pred.prob_digit_b * 100:.1f}%"
+        st.image(pred.prev_a_img.resize((96, 96)))
+        st.write(f"Ответ: {pred.digit_a}  ({pred.prob_digit_a * 100:.1f}%)")
+        if top3_digits_a:
+            st.write("Топ-3:")
+            for cls, p in top3_digits_a:
+                st.write(f"{cls} — {p * 100:.1f}%")
 
-        gA, gOp, gB = st.columns([1, 1, 1])
+with rOp:
+    st.markdown("**Распознавание оператора**")
+    if not ready:
+        st.write("Нет моделей.")
+    elif pred is None:
+        st.write("—")
+    else:
+        st.image(pred.prev_op_img.resize((96, 96)))
+        st.write(f"Ответ: {pred.operator}")
+        if top3_ops:
+            st.write("Топ-3:")
+            for sym, p in top3_ops:
+                st.write(f"{sym} — {p * 100:.1f}%")
 
-        with gA:
-            st.image(pred.prev_a_img.resize((96, 96)), caption=f"A = {pred.digit_a}   ({conf_a})")
-            if top3_digits_a is not None:
-                st.write("Топ-3 по A:")
-                for cls, p in top3_digits_a:
-                    st.write(f"{cls} — {p*100:.1f}%")
+with rB:
+    st.markdown("**Распознавание B**")
+    if not ready:
+        st.write("Нет моделей.")
+    elif pred is None:
+        st.write("—")
+    else:
+        st.image(pred.prev_b_img.resize((96, 96)))
+        st.write(f"Ответ: {pred.digit_b}  ({pred.prob_digit_b * 100:.1f}%)")
+        if top3_digits_b:
+            st.write("Топ-3:")
+            for cls, p in top3_digits_b:
+                st.write(f"{cls} — {p * 100:.1f}%")
 
-        with gOp:
-            st.image(pred.prev_op_img.resize((96, 96)), caption=f"Оператор = {pred.operator}")
-            if top3_ops is not None:
-                st.write("Топ-3 по оператору:")
-                for sym, p in top3_ops:
-                    st.write(f"{sym} — {p*100:.1f}%")
-
-        with gB:
-            st.image(pred.prev_b_img.resize((96, 96)), caption=f"B = {pred.digit_b}   ({conf_b})")
-            if top3_digits_b is not None:
-                st.write("Топ-3 по B:")
-                for cls, p in top3_digits_b:
-                    st.write(f"{cls} — {p*100:.1f}%")
-
-with right:
+with rCalc:
     st.markdown("**Вычисление**")
     if pred is not None:
         r = pred.eval
         st.markdown(
-            f"<div style='font-size:26px; font-weight:600; "
-            f"padding:6px 0'>{r.a} {r.op} {r.b} = {r.value}</div>",
+            f"<div style='font-size:26px; font-weight:600; padding:6px 0'>"
+            f"{r.a} {r.op} {r.b} = {r.value}"
+            f"</div>",
             unsafe_allow_html=True
         )
     else:
