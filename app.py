@@ -54,7 +54,6 @@ with cA1:
         width=CANVAS_W, height=CANVAS_H,
         drawing_mode="freedraw",
         key=f"canvas_a1_{st.session_state['reset']}",
-        display_toolbar=False,
     )
 
 with cA2:
@@ -67,7 +66,6 @@ with cA2:
         width=CANVAS_W, height=CANVAS_H,
         drawing_mode="freedraw",
         key=f"canvas_a2_{st.session_state['reset']}",
-        display_toolbar=False,
     )
 
 with cOp:
@@ -80,7 +78,6 @@ with cOp:
         width=CANVAS_W, height=CANVAS_H,
         drawing_mode="freedraw",
         key=f"canvas_op_{st.session_state['reset']}",
-        display_toolbar=False,
     )
 
 with cB1:
@@ -93,7 +90,6 @@ with cB1:
         width=CANVAS_W, height=CANVAS_H,
         drawing_mode="freedraw",
         key=f"canvas_b1_{st.session_state['reset']}",
-        display_toolbar=False,
     )
 
 with cB2:
@@ -106,7 +102,6 @@ with cB2:
         width=CANVAS_W, height=CANVAS_H,
         drawing_mode="freedraw",
         key=f"canvas_b2_{st.session_state['reset']}",
-        display_toolbar=False,
     )
 
 with cCtrl:
